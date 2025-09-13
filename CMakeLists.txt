@@ -12,4 +12,6 @@ add_executable(world_temp main.cpp
         Character.cpp
         Chunk.cpp
         Block.cpp
-        Noise.h)
+        Noise.h
+        Random.h
+        Random.cpp)

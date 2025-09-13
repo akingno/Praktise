@@ -12,12 +12,6 @@
 
 constexpr int CHUNK_SIZE = 64;
 
-inline uint8_t height_to_tile(double h, double t_water = -0.25, double t_rock = 0.35) {
-  // h ∈ [-1,1]（大概），阈值可调
-  if (h < t_water) return 1;   // 低处是水：~
-  if (h > t_rock)  return 2;  // 高处是山：^
-  return 0;                  // 中间是草：.
-}
 
 class Chunk {
  public:
@@ -44,7 +38,7 @@ class Chunk {
         int wx = cx * CHUNK_SIZE + i;
         int wy = cy * CHUNK_SIZE + j;
         double h = fbm.fbm(wx * base_freq, wy * base_freq);
-        _blocks[j * CHUNK_SIZE + i]._tile_type = height_to_tile(h);
+        _blocks[j * CHUNK_SIZE + i]._tile_type = Block::height_to_tile(h);
       }
     }
   }

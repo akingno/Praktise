@@ -23,7 +23,6 @@ using HashChunk = std::unordered_map<Key, Chunk>;
 using LruList = std::list<Key>;
 using WhereMap  = std::unordered_map<Key, LruList::iterator>;
 
-
 struct ChunkCache {
   HashChunk  data;     // key -> Chunk
   LruList    lru;      // 最近使用在前
@@ -39,6 +38,7 @@ struct VisibleChunks {
 };
 
 void enableAnsi() {
+  //用于windwos终端使用
   HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
   if (hOut == INVALID_HANDLE_VALUE) return;
   DWORD mode = 0;
@@ -123,6 +123,7 @@ struct Rect4 {
   int x0, y0, x1, y1;
 };
 
+void render_info();
 /**
  *
  * Compute the rectangle of camera
@@ -255,16 +256,16 @@ VisibleChunks compute_visible_chunks(const Rect4& rect, ChunkCache& cache) {
   return vc;
 }
 
-inline char tile_glyph(TileType t) {
-  switch (t) {
-    case TileType::Sea:  return '~';
-    case TileType::Rock: return '^';
-    case TileType::Grass:
-    default:             return '.';
-  }
+/**
+ *
+ * Output information at the last line
+ *
+ * */
+void render_info(const Character&character,
+                 uint64_t seed) {
+  std::cout << "Seed: " << seed <<"\n"
+            << "Character location: ("<< character.getLoc().first <<", " << character.getLoc().second <<")\n"<<std::flush;
 }
-
-
 
 void render_frame(const Rect4& rect,
                   const Character&character,
@@ -281,7 +282,10 @@ void render_frame(const Rect4& rect,
     return frame[ sy * (VIEW_W + 1) + sx ];
   };
 
-  for (int y = 0; y < VIEW_H; ++y) frame[y*(VIEW_W+1) + VIEW_W] = '\n';
+  //每行最后一个是换行(其实在屏幕宽度外)
+  for (int y = 0; y < VIEW_H; ++y) {
+    frame[y*(VIEW_W+1) + VIEW_W] = '\n';
+  }
 
 
   int wx0 = rect.x0, wy0 = rect.y0;
@@ -300,7 +304,7 @@ void render_frame(const Rect4& rect,
       for (int i = 0; i < vc.count; ++i) if (vc.keys[i] == k) { chunk = vc.ptrs[i]; break; }
 
       const Block& b = chunk->at(lx, ly);
-      buf_at(sx, sy) = tile_glyph((TileType)b._tile_type);
+      buf_at(sx, sy) = Block::tile_glyph((TileType)b._tile_type);
 
       // 向右走一格：递增 lx / 跨 chunk
       if (++lx == CHUNK_SIZE) { lx = 0; ++cx; }
@@ -313,15 +317,33 @@ void render_frame(const Rect4& rect,
   if (0 <= sx && sx < VIEW_W && 0 <= sy && sy < VIEW_H) {
     buf_at(sx, sy) = '@';
   }
-  //system("cls");
-  // 5) 输出（ANSI：光标归位再覆盖整帧）
-  //std::cout << frame << std::flush;   // 如果启动时清过屏
+
 
   // 或首次渲染前清屏一次
   static bool first = true;
   if (first) { std::cout << "\x1b[2J\x1b[H"; first = false; }
-  std::cout << "\x1b[H" << frame << "Seed: " << seed <<"\n"
-            << "Character location: ("<< character.getLoc().first <<", " << character.getLoc().second <<")\n"<<std::flush;
+
+  std::cout << "\x1b[H" << frame;
+  render_info(character, seed);
+
+}
+
+uint8_t get_tile_at_world(int wx, int wy, ChunkCache& cache, uint64_t seed){
+
+  int cx = floor_div(wx, CHUNK_SIZE);
+  int cy = floor_div(wy, CHUNK_SIZE);
+  int lx = floor_mod(wx, CHUNK_SIZE);
+  int ly = floor_mod(wy, CHUNK_SIZE);
+
+  Key k = make_chunk_key(cx, cy);
+  auto it = cache.data.find(k);
+  if (it == cache.data.end()) {
+    // 懒加载（与 updateChunksRendered 的生成一致）
+    cache.data.emplace(k, Chunk(seed, cx, cy));
+    it = cache.data.find(k);
+  }
+  touch(cache, k);
+  return it->second.at(lx, ly)._tile_type;
 }
 
 
@@ -339,14 +361,16 @@ int main() {
   Character character{};
   camera.onUpdate({1.0f,1.0f});
 
-  HashChunk hash_chunk;
-
   ChunkCache chunk_cache;
   chunk_cache.capacity = CAPA_CHUNK_CACHE;
   initialChunks(camera.getPos(), chunk_cache, seed);
 
   //world->print_seed();
 
+  auto is_passable = [&](int wx,int wy){
+    uint8_t tile_type = get_tile_at_world(wx, wy, chunk_cache, seed); // 你已有的通用查询
+    return Block::Int2Tile(tile_type) == TileType::Grass; // 规则自己定
+  };
 
   using clock = std::chrono::steady_clock;
   auto next_tick = clock::now();
@@ -354,12 +378,13 @@ int main() {
   while(running){
 
     //移动角色
-    character.move();
-    //移动镜头
-    camera.onUpdate(character.getLoc());
-    //判断是否有新chunk加入
-    //更新cachechunk和lastusedkeys
-    updateChunksRendered(camera.getPos(), chunk_cache, seed);
+    if(character.tryMove(is_passable, 0.55)){
+      //移动镜头
+      camera.onUpdate(character.getLoc());
+      //判断是否有新chunk加入
+      //更新cachechunk和lastusedkeys
+      updateChunksRendered(camera.getPos(), chunk_cache, seed);
+    }
 
     //用镜头坐标求要渲染的坐标的世界坐标
     auto rect_4 = camera_world_rect(camera.getPos());
